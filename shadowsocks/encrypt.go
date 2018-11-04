@@ -7,14 +7,12 @@ import (
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/rc4"
-	"encoding/binary"
 	"errors"
 	"io"
-
-	"github.com/aead/chacha20"
-	"golang.org/x/crypto/blowfish"
-	"golang.org/x/crypto/cast5"
-	"golang.org/x/crypto/salsa20/salsa"
+	// "github.com/aead/chacha20"
+	// "golang.org/x/crypto/blowfish"
+	// "golang.org/x/crypto/cast5"
+	// "golang.org/x/crypto/salsa20/salsa"
 )
 
 var errEmptyPassword = errors.New("empty key")
@@ -82,16 +80,6 @@ func newDESStream(key, iv []byte, doe DecOrEnc) (cipher.Stream, error) {
 	return newStream(block, err, key, iv, doe)
 }
 
-func newBlowFishStream(key, iv []byte, doe DecOrEnc) (cipher.Stream, error) {
-	block, err := blowfish.NewCipher(key)
-	return newStream(block, err, key, iv, doe)
-}
-
-func newCast5Stream(key, iv []byte, doe DecOrEnc) (cipher.Stream, error) {
-	block, err := cast5.NewCipher(key)
-	return newStream(block, err, key, iv, doe)
-}
-
 func newRC4MD5Stream(key, iv []byte, _ DecOrEnc) (cipher.Stream, error) {
 	h := md5.New()
 	h.Write(key)
@@ -101,54 +89,6 @@ func newRC4MD5Stream(key, iv []byte, _ DecOrEnc) (cipher.Stream, error) {
 	return rc4.NewCipher(rc4key)
 }
 
-func newChaCha20Stream(key, iv []byte, _ DecOrEnc) (cipher.Stream, error) {
-	return chacha20.NewCipher(iv, key)
-}
-
-func newChaCha20IETFStream(key, iv []byte, _ DecOrEnc) (cipher.Stream, error) {
-	return chacha20.NewCipher(iv, key)
-}
-
-type salsaStreamCipher struct {
-	nonce   [8]byte
-	key     [32]byte
-	counter int
-}
-
-func (c *salsaStreamCipher) XORKeyStream(dst, src []byte) {
-	var buf []byte
-	padLen := c.counter % 64
-	dataSize := len(src) + padLen
-	if cap(dst) >= dataSize {
-		buf = dst[:dataSize]
-	} else if leakyBufSize >= dataSize {
-		buf = leakyBuf.Get()
-		defer leakyBuf.Put(buf)
-		buf = buf[:dataSize]
-	} else {
-		buf = make([]byte, dataSize)
-	}
-
-	var subNonce [16]byte
-	copy(subNonce[:], c.nonce[:])
-	binary.LittleEndian.PutUint64(subNonce[len(c.nonce):], uint64(c.counter/64))
-
-	// It's difficult to avoid data copy here. src or dst maybe slice from
-	// Conn.Read/Write, which can't have padding.
-	copy(buf[padLen:], src[:])
-	salsa.XORKeyStream(buf, buf, &subNonce, &c.key)
-	copy(dst, buf[padLen:])
-
-	c.counter += len(src)
-}
-
-func newSalsa20Stream(key, iv []byte, _ DecOrEnc) (cipher.Stream, error) {
-	var c salsaStreamCipher
-	copy(c.nonce[:], iv[:8])
-	copy(c.key[:], key[:32])
-	return &c, nil
-}
-
 type cipherInfo struct {
 	keyLen    int
 	ivLen     int
@@ -156,20 +96,15 @@ type cipherInfo struct {
 }
 
 var cipherMethod = map[string]*cipherInfo{
-	"aes-128-cfb":   {16, 16, newAESCFBStream},
-	"aes-192-cfb":   {24, 16, newAESCFBStream},
-	"aes-256-cfb":   {32, 16, newAESCFBStream},
-	"aes-128-ctr":   {16, 16, newAESCTRStream},
-	"aes-192-ctr":   {24, 16, newAESCTRStream},
-	"aes-256-ctr":   {32, 16, newAESCTRStream},
-	"des-cfb":       {8, 8, newDESStream},
-	"bf-cfb":        {16, 8, newBlowFishStream},
-	"cast5-cfb":     {16, 8, newCast5Stream},
-	"rc4-md5":       {16, 16, newRC4MD5Stream},
-	"rc4-md5-6":     {16, 6, newRC4MD5Stream},
-	"chacha20":      {32, 8, newChaCha20Stream},
-	"chacha20-ietf": {32, 12, newChaCha20IETFStream},
-	"salsa20":       {32, 8, newSalsa20Stream},
+	"aes-128-cfb": {16, 16, newAESCFBStream},
+	"aes-192-cfb": {24, 16, newAESCFBStream},
+	"aes-256-cfb": {32, 16, newAESCFBStream},
+	"aes-128-ctr": {16, 16, newAESCTRStream},
+	"aes-192-ctr": {24, 16, newAESCTRStream},
+	"aes-256-ctr": {32, 16, newAESCTRStream},
+	"des-cfb":     {8, 8, newDESStream},
+	"rc4-md5":     {16, 16, newRC4MD5Stream},
+	"rc4-md5-6":   {16, 6, newRC4MD5Stream},
 }
 
 func CheckCipherMethod(method string) error {
